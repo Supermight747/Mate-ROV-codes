@@ -1,0 +1,81 @@
+#include <Servo.h>
+
+Servo leftMotor;
+Servo rightMotor;
+
+String incomingData = ""; // A string to hold incoming data
+
+// Define the LED pin (Pin 13 on most Arduinos)
+#define LED_PIN LED_BUILTIN 
+
+void setup() {
+  // Must match the ESP32's Serial2 speed!
+  Serial.begin(115200); 
+  
+  // Attach motors to PWM pins
+  leftMotor.attach(9);
+  rightMotor.attach(10);
+  
+  // --- NEW: Setup the LED ---
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW); // Start with the LED off
+  
+  Serial.println("Arduino Controller listening (with LED test)...");
+  stopMotors();
+}
+
+void loop() {
+  // Listen for data from the ESP32
+  while (Serial.available() > 0) {
+    char inChar = Serial.read();
+    
+    if (inChar == '\n') {
+      processData(incomingData);
+      incomingData = ""; // Clear for next message
+    } else {
+      incomingData += inChar;
+    }
+  }
+}
+
+void processData(String data) {
+  
+  // --- NEW: Check for LED commands FIRST ---
+  if (data.startsWith("CMD:LED_ON")) {
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println(">>> LED ON Received");
+  
+  } else if (data.startsWith("CMD:LED_OFF")) {
+      digitalWrite(LED_PIN, LOW);
+      Serial.println(">>> LED OFF Received");
+
+  // --- EXISTING motor code ---
+  } else if (data.startsWith("X")) {
+      // It's motor data, e.g., "X512,Y-200"
+      
+      // Let the user know we received motor data
+      Serial.print("Motor Data: ");
+      Serial.println(data);
+      
+      int y_index = data.indexOf('Y');
+      long axisX = data.substring(1, y_index - 1).toInt();
+      long axisY = data.substring(y_index + 1).toInt();
+
+      long left = axisY + axisX;
+      long right = axisY - axisX;
+
+      int leftPWM = map(left, -511, 512, 1000, 2000);
+      int rightPWM = map(right, -511, 512, 1000, 2000);
+
+      leftPWM = constrain(leftPWM, 1000, 2000);
+      rightPWM = constrain(rightPWM, 1000, 2000);
+
+      leftMotor.writeMicroseconds(leftPWM);
+      rightMotor.writeMicroseconds(rightPWM);
+  }
+}
+
+void stopMotors() {
+  leftMotor.writeMicroseconds(1500);
+  rightMotor.writeMicroseconds(1500);
+}
