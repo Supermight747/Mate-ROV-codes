@@ -1,0 +1,106 @@
+#include <Bluepad32.h>
+
+// Define TX/RX pins for serial communication with Arduino
+#define TX_PIN 17  // ESP32 TX -> Arduino Pin 0 (RX)
+#define RX_PIN 16  // ESP32 RX -> Arduino Pin 1 (TX)
+
+ControllerPtr myControllers[BP32_MAX_GAMEPADS];
+
+// Variables for joystick data
+int16_t lastX = 0;
+int16_t lastY = 0;
+const int DEADZONE = 20; // To prevent joystick "drift"
+
+// --- Controller Connection Callbacks ---
+void onConnectedController(ControllerPtr ctl) {
+    bool foundEmptySlot = false;
+    for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
+        if (myControllers[i] == nullptr) {
+            Serial.printf("CALLBACK: Controller connected, index=%d\n", i);
+            myControllers[i] = ctl;
+            foundEmptySlot = true;
+            break;
+        }
+    }
+    if (!foundEmptySlot) {
+        Serial.println("CALLBACK: Controller connected, but no empty slot");
+    }
+}
+
+void onDisconnectedController(ControllerPtr ctl) {
+    for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
+        if (myControllers[i] == ctl) {
+            Serial.printf("CALLBACK: Controller disconnected from index=%d\n", i);
+            myControllers[i] = nullptr;
+            // Send a "stop" command to Arduino on disconnect
+            Serial2.println("X0,Y0\n");
+            break;
+        }
+    }
+}
+
+// --- Main function to process controller data ---
+void processGamepad(ControllerPtr ctl) {
+    // --- Joystick (Motor) Data ---
+    int16_t axisX = ctl->axisX();
+    int16_t axisY = ctl->axisY();
+
+    if (abs(axisX) < DEADZONE) axisX = 0;
+    if (abs(axisY) < DEADZONE) axisY = 0;
+
+    if (axisX != lastX || axisY != lastY) {
+        Serial2.printf("X%d,Y%d\n", axisX, axisY);
+        Serial.printf("Sent to Arduino -> X: %4d, Y: %4d\n", axisX, axisY);
+        lastX = axisX;
+        lastY = axisY;
+    }
+    
+    // --- NEW: LED Button Data ---
+    // We use static variables to send the command only ONCE per press
+    static bool aPressedLastFrame = false;
+    static bool bPressedLastFrame = false;
+
+    // Check Button 1 (A Button)
+    if (ctl->a() && !aPressedLastFrame) {
+        Serial2.println("CMD:LED_ON\n"); // Send ON command
+        Serial.println(">>> Sent LED_ON command");
+    }
+    aPressedLastFrame = ctl->a(); // Update state for next loop
+
+    // Check Button 2 (B Button)
+    if (ctl->b() && !bPressedLastFrame) {
+        Serial2.println("CMD:LED_OFF\n"); // Send OFF command
+        Serial.println(">>> Sent LED_OFF command");
+    }
+    bPressedLastFrame = ctl->b(); // Update state for next loop
+}
+
+void processControllers() {
+    for (auto myController : myControllers) {
+        if (myController && myController->isConnected() && myController->hasData()) {
+            if (myController->isGamepad()) {
+                processGamepad(myController);
+            }
+        }
+    }
+}
+
+// --- Setup ---
+void setup() {
+    Serial.begin(115200); // For debugging to PC
+    Serial2.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN); // For Arduino
+    
+    Serial.println("ESP32 Bluetooth-to-Serial Bridge Initialized.");
+    Serial.println("Sending Joysticks + LED Commands (A=ON, B=OFF)");
+
+    BP32.setup(&onConnectedController, &onDisconnectedController);
+    BP32.forgetBluetoothKeys();
+}
+
+// --- Loop ---
+void loop() {
+    bool dataUpdated = BP32.update();
+    if (dataUpdated)
+        processControllers();
+    delay(20);
+}
